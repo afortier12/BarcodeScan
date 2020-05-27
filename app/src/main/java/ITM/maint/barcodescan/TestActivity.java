@@ -7,6 +7,7 @@ import android.graphics.SurfaceTexture;
 import android.os.Bundle;
 import android.view.Surface;
 import android.view.TextureView;
+import android.view.View;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
@@ -26,10 +27,11 @@ import java.util.concurrent.ExecutionException;
 
 import javax.inject.Inject;
 
+import ITM.maint.barcodescan.common.GraphicOverlay;
 import dagger.android.support.DaggerAppCompatActivity;
 
 
-public class TestActivity extends DaggerAppCompatActivity implements ActivityCompat.OnRequestPermissionsResultCallback {
+public class TestActivity extends DaggerAppCompatActivity, View.OnClickListener implements ActivityCompat.OnRequestPermissionsResultCallback {
 
     private ListenableFuture<ProcessCameraProvider> cameraProviderFuture;
 
@@ -57,11 +59,15 @@ public class TestActivity extends DaggerAppCompatActivity implements ActivityCom
 
         Preview preview = new Preview.Builder().build();
 
+
+        GraphicOverlay graphicOverlay = findViewById(R.id.camera_preview_graphic_overlay);
+        graphicOverlay.setOnClickListener(this);
+
         ImageAnalysis imageAnalysis = new ImageAnalysis.Builder()
             .setImageQueueDepth(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .build();
 
-        CodeAnalyzer codeAnalyzer = new CodeAnalyzer(this, appExecutor.detectorThread());
+        CodeAnalyzer codeAnalyzer = new CodeAnalyzer(this, graphicOverlay, appExecutor.detectorThread());
         imageAnalysis.setAnalyzer(appExecutor.analyzerThread(), codeAnalyzer);
 
         CameraSelector cameraSelector = new CameraSelector.Builder()
@@ -126,6 +132,15 @@ public class TestActivity extends DaggerAppCompatActivity implements ActivityCom
                     }
                 }
             }
+        }
+    }
+
+    @Override
+    public void onClick(View view) {
+        int id = view.getId();
+        if (id == R.id.close_button) {
+            onBackPressed();
+
         }
     }
 }
