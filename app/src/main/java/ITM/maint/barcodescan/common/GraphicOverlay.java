@@ -89,6 +89,8 @@ public class GraphicOverlay extends View {
      * Sets the camera attributes for size and facing direction, which informs how to transform image
      * coordinates later.
      */
+
+    /*
     public void setCameraInfo(CameraSource cameraSource) {
         Size previewSize = cameraSource.getPreviewSize();
         if (isPortraitMode(getContext())) {
@@ -99,7 +101,7 @@ public class GraphicOverlay extends View {
             previewWidth = previewSize.getWidth();
             previewHeight = previewSize.getHeight();
         }
-    }
+    }*/
 
     public float translateX(float x) {
         return x * widthScaleFactor;

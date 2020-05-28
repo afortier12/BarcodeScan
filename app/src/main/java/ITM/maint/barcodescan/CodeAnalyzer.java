@@ -30,7 +30,7 @@ import java.util.concurrent.Executor;
 
 import ITM.maint.barcodescan.common.CameraReticleAnimator;
 import ITM.maint.barcodescan.common.GraphicOverlay;
-
+import ITM.maint.barcodescan.common.preferences.PreferenceUtils;
 
 public class CodeAnalyzer implements ImageAnalysis.Analyzer {
 
@@ -114,7 +114,6 @@ public class CodeAnalyzer implements ImageAnalysis.Analyzer {
                                 if (sizeProgress < 1) {
                                     // Barcode in the camera view is too small, so prompt user to move camera closer.
                                     graphicOverlay.add(new BarcodeConfirmingGraphic(graphicOverlay, barcodeInCenter));
-                                    workflowModel.setWorkflowState(WorkflowState.CONFIRMING);
 
                                 } else {
                                     // Barcode size in the camera view is sufficient.
@@ -122,11 +121,6 @@ public class CodeAnalyzer implements ImageAnalysis.Analyzer {
                                         ValueAnimator loadingAnimator = createLoadingAnimator(graphicOverlay, barcodeInCenter);
                                         loadingAnimator.start();
                                         graphicOverlay.add(new BarcodeLoadingGraphic(graphicOverlay, loadingAnimator));
-                                        workflowModel.setWorkflowState(WorkflowState.SEARCHING);
-
-                                    } else {
-                                        workflowModel.setWorkflowState(WorkflowState.DETECTED);
-                                        workflowModel.detectedBarcode.setValue(barcodeInCenter);
                                     }
                                 }
                             }
@@ -165,8 +159,6 @@ public class CodeAnalyzer implements ImageAnalysis.Analyzer {
                 animation -> {
                     if (Float.compare((float) loadingAnimator.getAnimatedValue(), endProgress) >= 0) {
                         graphicOverlay.clear();
-                        workflowModel.setWorkflowState(WorkflowState.SEARCHED);
-                        workflowModel.detectedBarcode.setValue(barcode);
                     } else {
                         graphicOverlay.invalidate();
                     }

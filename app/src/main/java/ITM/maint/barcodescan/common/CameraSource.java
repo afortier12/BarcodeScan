@@ -278,7 +278,7 @@ public class CameraSource {
         }
         Camera camera = Camera.open(requestedCameraId);
 
-        SizePair sizePair = PreferenceUtils.getCameraPreviewSizePair(activity, requestedCameraId);
+       /* SizePair sizePair = PreferenceUtils.getCameraPreviewSizePair(activity, requestedCameraId);
         if (sizePair == null) {
             sizePair =
                     selectSizePair(
@@ -326,7 +326,7 @@ public class CameraSource {
         }
 
         camera.setParameters(parameters);
-
+*/
         // Four frame buffers are needed for working with the camera:
         //
         //   one for the frame that is currently being executed upon in doing detection

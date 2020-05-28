@@ -31,7 +31,7 @@ import ITM.maint.barcodescan.common.GraphicOverlay;
 import dagger.android.support.DaggerAppCompatActivity;
 
 
-public class TestActivity extends DaggerAppCompatActivity, View.OnClickListener implements ActivityCompat.OnRequestPermissionsResultCallback {
+public class TestActivity extends DaggerAppCompatActivity implements ActivityCompat.OnRequestPermissionsResultCallback, View.OnClickListener {
 
     private ListenableFuture<ProcessCameraProvider> cameraProviderFuture;
 
@@ -43,7 +43,7 @@ public class TestActivity extends DaggerAppCompatActivity, View.OnClickListener 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.test);
+        setContentView(R.layout.activity_live_barcode);
 
         cameraProviderFuture = ProcessCameraProvider.getInstance(this);
         openCamera();
@@ -76,8 +76,8 @@ public class TestActivity extends DaggerAppCompatActivity, View.OnClickListener 
         //bind to lifecycle:
         Camera camera = cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalysis);
 
-        PreviewView previewView=findViewById(R.id.preview_view);
-        previewView.setImplementationMode(PreviewView.ImplementationMode.TEXTURE_VIEW);
+        PreviewView previewView=findViewById(R.id.camera_preview);
+        previewView.setImplementationMode(PreviewView.ImplementationMode.SURFACE_VIEW);
         preview.setSurfaceProvider( previewView.getPreviewSurfaceProvider());
 
 
