@@ -30,6 +30,8 @@ import java.util.concurrent.Executor;
 
 import ITM.maint.barcodescan.common.CameraReticleAnimator;
 import ITM.maint.barcodescan.common.GraphicOverlay;
+import ITM.maint.barcodescan.common.WorkflowModel;
+import ITM.maint.barcodescan.common.WorkflowModel.WorkflowState;
 import ITM.maint.barcodescan.common.preferences.PreferenceUtils;
 
 public class CodeAnalyzer implements ImageAnalysis.Analyzer {
@@ -40,6 +42,7 @@ public class CodeAnalyzer implements ImageAnalysis.Analyzer {
     private GraphicOverlay graphicOverlay;
     private final CameraReticleAnimator cameraReticleAnimator;
     private FirebaseVisionBarcodeDetector barcodeDetector;
+    private WorkflowModel workflowModel;
 
 
     private static final SparseIntArray ORIENTATIONS = new SparseIntArray();
@@ -50,11 +53,12 @@ public class CodeAnalyzer implements ImageAnalysis.Analyzer {
         ORIENTATIONS.append(Surface.ROTATION_270, 180);
     }
 
-    public CodeAnalyzer(Context context, GraphicOverlay graphicOverlay,  Executor executor) {
+    public CodeAnalyzer(Context context, GraphicOverlay graphicOverlay,  Executor executor, WorkflowModel workflowModel) {
         this.context = context;
         this.executor = executor;
         this.graphicOverlay = graphicOverlay;
         this.cameraReticleAnimator = new CameraReticleAnimator(graphicOverlay);
+        this.workflowModel = workflowModel;
     }
 
     private int getFirebaseRotation(Context context) {
@@ -107,6 +111,7 @@ public class CodeAnalyzer implements ImageAnalysis.Analyzer {
                             if (barcodeInCenter == null) {
                                 cameraReticleAnimator.start();
                                 graphicOverlay.add(new BarcodeReticleGraphic(graphicOverlay, cameraReticleAnimator));
+                                workflowModel.setWorkflowState(WorkflowState.DETECTING);
                             } else {
                                 cameraReticleAnimator.cancel();
                                 float sizeProgress =
@@ -114,39 +119,24 @@ public class CodeAnalyzer implements ImageAnalysis.Analyzer {
                                 if (sizeProgress < 1) {
                                     // Barcode in the camera view is too small, so prompt user to move camera closer.
                                     graphicOverlay.add(new BarcodeConfirmingGraphic(graphicOverlay, barcodeInCenter));
-
+                                    workflowModel.setWorkflowState(WorkflowState.CONFIRMING);
                                 } else {
                                     // Barcode size in the camera view is sufficient.
                                     if (PreferenceUtils.shouldDelayLoadingBarcodeResult(graphicOverlay.getContext())) {
                                         ValueAnimator loadingAnimator = createLoadingAnimator(graphicOverlay, barcodeInCenter);
                                         loadingAnimator.start();
                                         graphicOverlay.add(new BarcodeLoadingGraphic(graphicOverlay, loadingAnimator));
+                                        workflowModel.setWorkflowState(WorkflowState.SEARCHING);
+                                    } else {
+                                        workflowModel.setWorkflowState(WorkflowState.DETECTED);
+                                        workflowModel.detectedBarcode.setValue(barcodeInCenter);
                                     }
                                 }
                             }
                             graphicOverlay.invalidate();
 
-                            Rect bounds = barcode.getBoundingBox();
-                            Point[] corners = barcode.getCornerPoints();
-
-                            String rawValue = barcode.getRawValue();
-
-                            int valueType = barcode.getValueType();
-                            // See API reference for complete list of supported types
-                            switch (valueType) {
-                                case FirebaseVisionBarcode.TYPE_WIFI:
-                                    String ssid = barcode.getWifi().getSsid();
-                                    String password = barcode.getWifi().getPassword();
-                                    int type = barcode.getWifi().getEncryptionType();
-                                    break;
-                                case FirebaseVisionBarcode.TYPE_URL:
-                                    String title = barcode.getUrl().getTitle();
-                                    String url = barcode.getUrl().getUrl();
-                                    break;
-                            }
                         }
                     }
-                        image.close();
                 });
     }
 

@@ -68,4 +68,12 @@ public class PreferenceUtils {
             return 1;
         }
     }
+
+    public static void saveStringPreference(
+            Context context, @StringRes int prefKeyId, @Nullable String value) {
+        PreferenceManager.getDefaultSharedPreferences(context)
+                .edit()
+                .putString(context.getString(prefKeyId), value)
+                .apply();
+    }
 }

@@ -33,11 +33,11 @@ dependencies {
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.2.0'
     compileOnly 'javax.annotation:jsr250-api:1.0'
 
-    def camerax_version = "1.0.0-beta03"
+    def camerax_version = "1.0.0-beta04"
     implementation "androidx.camera:camera-core:${camerax_version}"
     implementation "androidx.camera:camera-camera2:${camerax_version}"
     implementation "androidx.camera:camera-lifecycle:${camerax_version}"
-    implementation "androidx.camera:camera-view:1.0.0-alpha08"
+    implementation "androidx.camera:camera-view:1.0.0-alpha11"
     implementation 'androidx.preference:preference:1.1.1'
     implementation 'androidx.media:media:1.1.0'
     implementation 'com.google.android.material:material:1.1.0'
@@ -58,5 +58,8 @@ dependencies {
     implementation 'com.google.dagger:dagger-android-support:2.20' // if you use the support libraries
     annotationProcessor 'com.google.dagger:dagger-android-processor:2.20'
     annotationProcessor 'com.google.dagger:dagger-compiler:2.20'
+
+    api 'com.google.guava:guava:28.2-jre'
+    implementation 'androidx.lifecycle:lifecycle-extensions:2.2.0'
 }
 

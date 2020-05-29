@@ -1,39 +1,56 @@
 package ITM.maint.barcodescan;
 
 import android.Manifest;
+import android.animation.AnimatorInflater;
+import android.animation.AnimatorSet;
+import android.content.Intent;
 import android.content.pm.PackageManager;
-import android.graphics.Matrix;
-import android.graphics.SurfaceTexture;
+
 import android.os.Bundle;
-import android.view.Surface;
-import android.view.TextureView;
+import android.util.Log;
 import android.view.View;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
-import androidx.appcompat.app.AppCompatActivity;
 import androidx.camera.core.Camera;
 import androidx.camera.core.CameraSelector;
-import androidx.camera.core.CameraX;
 import androidx.camera.lifecycle.ProcessCameraProvider;
 import androidx.camera.core.ImageAnalysis;
 import androidx.camera.core.Preview;
 import androidx.camera.view.PreviewView;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import androidx.lifecycle.ViewModelProvider;
 
+import com.google.android.material.chip.Chip;
+import com.google.common.base.Objects;
 import com.google.common.util.concurrent.ListenableFuture;
+
+import java.io.IOException;
+import java.util.ArrayList;
 import java.util.concurrent.ExecutionException;
 
 import javax.inject.Inject;
 
 import ITM.maint.barcodescan.common.GraphicOverlay;
+import ITM.maint.barcodescan.common.WorkflowModel;
+import ITM.maint.barcodescan.common.WorkflowModel.WorkflowState;
 import dagger.android.support.DaggerAppCompatActivity;
 
 
 public class TestActivity extends DaggerAppCompatActivity implements ActivityCompat.OnRequestPermissionsResultCallback, View.OnClickListener {
 
+    private static final String TAG = "TestActivity";
     private ListenableFuture<ProcessCameraProvider> cameraProviderFuture;
+    private Preview preview;
+    private PreviewView previewView;
+    private View settingsButton;
+    private View flashButton;
+    private Chip promptChip;
+    private AnimatorSet promptChipAnimator;
+    private WorkflowModel workflowModel;
+    private WorkflowState currentWorkflowState;
+    private Camera camera;
 
     @Inject
     AppExecutor appExecutor;
@@ -45,7 +62,23 @@ public class TestActivity extends DaggerAppCompatActivity implements ActivityCom
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_live_barcode);
 
+        previewView=findViewById(R.id.camera_preview);
+
+        promptChip = findViewById(R.id.bottom_prompt_chip);
+        promptChipAnimator =
+                (AnimatorSet) AnimatorInflater.loadAnimator(this, R.animator.bottom_prompt_chip_enter);
+        promptChipAnimator.setTarget(promptChip);
+
+
+        findViewById(R.id.close_button).setOnClickListener(this);
+        flashButton = findViewById(R.id.flash_button);
+        flashButton.setOnClickListener(this);
+        settingsButton = findViewById(R.id.settings_button);
+        settingsButton.setOnClickListener(this);
+
         cameraProviderFuture = ProcessCameraProvider.getInstance(this);
+
+        setUpWorkflowModel();
         openCamera();
     }
 
@@ -57,8 +90,9 @@ public class TestActivity extends DaggerAppCompatActivity implements ActivityCom
 
     private void bindPreview(@NonNull ProcessCameraProvider cameraProvider) {
 
-        Preview preview = new Preview.Builder().build();
-
+        preview = new Preview.Builder().build();
+        previewView.setPreferredImplementationMode(PreviewView.ImplementationMode.SURFACE_VIEW);
+        preview.setSurfaceProvider( previewView.createSurfaceProvider());
 
         GraphicOverlay graphicOverlay = findViewById(R.id.camera_preview_graphic_overlay);
         graphicOverlay.setOnClickListener(this);
@@ -67,19 +101,14 @@ public class TestActivity extends DaggerAppCompatActivity implements ActivityCom
             .setImageQueueDepth(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .build();
 
-        CodeAnalyzer codeAnalyzer = new CodeAnalyzer(this, graphicOverlay, appExecutor.detectorThread());
+        CodeAnalyzer codeAnalyzer = new CodeAnalyzer(this, graphicOverlay, appExecutor.detectorThread(), workflowModel);
         imageAnalysis.setAnalyzer(appExecutor.analyzerThread(), codeAnalyzer);
 
         CameraSelector cameraSelector = new CameraSelector.Builder()
                 .requireLensFacing(CameraSelector.LENS_FACING_BACK)
                 .build();
         //bind to lifecycle:
-        Camera camera = cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalysis);
-
-        PreviewView previewView=findViewById(R.id.camera_preview);
-        previewView.setImplementationMode(PreviewView.ImplementationMode.SURFACE_VIEW);
-        preview.setSurfaceProvider( previewView.getPreviewSurfaceProvider());
-
+        camera = cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalysis);
 
     }
 
@@ -141,6 +170,93 @@ public class TestActivity extends DaggerAppCompatActivity implements ActivityCom
         if (id == R.id.close_button) {
             onBackPressed();
 
+        } else if (id == R.id.flash_button) {
+            if (flashButton.isSelected()) {
+                flashButton.setSelected(false);
+                camera.getCameraControl().enableTorch(false);
+            } else {
+                flashButton.setSelected(true);
+                camera.getCameraControl().enableTorch(true);
+            }
+
+        } else if (id == R.id.settings_button) {
+            // Sets as disabled to prevent the user from clicking on it too fast.
+            settingsButton.setEnabled(false);
+            startActivity(new Intent(this, SettingsActivity.class));
         }
+    }
+
+    private void startCameraPreview() {
+        if (!workflowModel.isCameraLive() && camera != null) {
+            workflowModel.markCameraLive();
+        }
+    }
+
+    private void stopCameraPreview() {
+        if (workflowModel.isCameraLive()) {
+            workflowModel.markCameraFrozen();
+            flashButton.setSelected(false);
+        }
+    }
+
+    private void setUpWorkflowModel() {
+        workflowModel = new ViewModelProvider(this).get(WorkflowModel.class);
+
+        // Observes the workflow state changes, if happens, update the overlay view indicators and
+        // camera preview state.
+        workflowModel.workflowState.observe(
+                this,
+                workflowState -> {
+                    if (workflowState == null || Objects.equal(currentWorkflowState, workflowState)) {
+                        return;
+                    }
+
+                    currentWorkflowState = workflowState;
+                    Log.d(TAG, "Current workflow state: " + currentWorkflowState.name());
+
+                    boolean wasPromptChipGone = (promptChip.getVisibility() == View.GONE);
+
+                    switch (workflowState) {
+                        case DETECTING:
+                            promptChip.setVisibility(View.VISIBLE);
+                            promptChip.setText(R.string.prompt_point_at_a_barcode);
+                            startCameraPreview();
+                            break;
+                        case CONFIRMING:
+                            promptChip.setVisibility(View.VISIBLE);
+                            promptChip.setText(R.string.prompt_move_camera_closer);
+                            startCameraPreview();
+                            break;
+                        case SEARCHING:
+                            promptChip.setVisibility(View.VISIBLE);
+                            promptChip.setText(R.string.prompt_searching);
+                            stopCameraPreview();
+                            break;
+                        case DETECTED:
+                        case SEARCHED:
+                            promptChip.setVisibility(View.GONE);
+                            stopCameraPreview();
+                            break;
+                        default:
+                            promptChip.setVisibility(View.GONE);
+                            break;
+                    }
+
+                    boolean shouldPlayPromptChipEnteringAnimation =
+                            wasPromptChipGone && (promptChip.getVisibility() == View.VISIBLE);
+                    if (shouldPlayPromptChipEnteringAnimation && !promptChipAnimator.isRunning()) {
+                        promptChipAnimator.start();
+                    }
+                });
+
+        workflowModel.detectedBarcode.observe(
+                this,
+                barcode -> {
+                    if (barcode != null) {
+                        ArrayList<BarcodeField> barcodeFieldList = new ArrayList<>();
+                        barcodeFieldList.add(new BarcodeField("Raw Value", barcode.getRawValue()));
+                        BarcodeResultFragment.show(getSupportFragmentManager(), barcodeFieldList);
+                    }
+                });
     }
 }
