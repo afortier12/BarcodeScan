@@ -2,25 +2,29 @@
     <string name="app_name">BarcodeScan</string>
     <string name="barcode_item">Scan</string>
     <!-- Strings for camera settings. -->
-    <string name="pref_category_key_camera" translatable="false">pckc</string>
-    <string name="pref_category_title_camera">Camera</string>
+    <string name="pref_category_camera">Camera</string>
     <string name="pref_key_rear_camera_preview_size" translatable="false">rcpvs</string>
     <string name="pref_key_rear_camera_picture_size" translatable="false">rcpts</string>
-    <string name="pref_key_front_camera_preview_size" translatable="false">fcpvs</string>
-    <string name="pref_key_front_camera_picture_size" translatable="false">fcpts</string>
-    <string name="pref_key_camera_live_viewport" translatable="false">clv</string>
     <string name="pref_title_rear_camera_preview_size">Rear camera preview size</string>
-    <string name="pref_title_front_camera_preview_size">Front camera preview size</string>
-    <string name="pref_title_camera_live_viewport">Enable live viewport</string>
-    <string name="pref_summary_camera_live_viewport">Do not block camera preview drawing on detection</string>
-    <!-- Strings for object detector enable multiple objects preference. -->
+
+    <!-- Strings for object detection settings. -->
+    <string name="pref_category_object_detection">Object detection</string>
+    <string name="pref_key_object_detector_enable_multiple_objects" translatable="false">odemo</string>
     <string name="pref_title_object_detector_enable_multiple_objects">Enable multiple objects</string>
-    <string name="pref_key_live_preview_object_detector_enable_multiple_objects" translatable="false">lpodemo</string>
-    <string name="pref_key_still_image_object_detector_enable_multiple_objects" translatable="false">siodemo</string>
-    <!-- Strings for object detector enable classification preference. -->
+    <string name="pref_key_object_detector_enable_classification" translatable="false">odec</string>
     <string name="pref_title_object_detector_enable_classification">Enable classification</string>
-    <string name="pref_key_live_preview_object_detector_enable_classification" translatable="false">lpodec</string>
-    <string name="pref_key_still_image_object_detector_enable_classification" translatable="false">siodec</string>
+
+    <!-- Strings for product search settings. -->
+    <string name="pref_category_product_search">Product search</string>
+    <string name="pref_key_enable_auto_search" translatable="false">pkeas</string>
+    <string name="pref_title_enable_auto_search">Enable auto search</string>
+    <string name="pref_key_confirmation_time_in_manual_search" translatable="false">ctims</string>
+    <string name="pref_title_confirmation_time_in_manual_search">Confirmation time in manual search</string>
+    <string name="pref_summary_confirmation_time_in_manual_search">Ranges from 100ms to 1000ms</string>
+    <string name="pref_key_confirmation_time_in_auto_search" translatable="false">ctias</string>
+    <string name="pref_title_confirmation_time_in_auto_search">Confirmation time in auto search</string>
+    <string name="pref_summary_confirmation_time_in_auto_search">Ranges from 500ms to 2000ms</string>
+
     <!-- Strings for barcode detection settings. -->
     <string name="pref_category_barcode_detection">Barcode detection</string>
     <string name="pref_key_barcode_reticle_width" translatable="false">barcode_brw</string>
@@ -38,6 +42,7 @@
     <string name="pref_key_delay_loading_barcode_result" translatable="false">barcode_dlbr</string>
     <string name="pref_title_delay_loading_barcode_result">Delay loading barcode result</string>
     <string name="pref_summary_delay_loading_barcode_result">Will show the loading spinner for 2s</string>
+
 
     <string name="product_search_button">Search object</string>
 

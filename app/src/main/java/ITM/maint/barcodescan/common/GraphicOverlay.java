@@ -22,8 +22,9 @@ import android.graphics.Canvas;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.util.AttributeSet;
+import android.util.Size;
 import android.view.View;
-import com.google.android.gms.common.images.Size;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -89,8 +90,6 @@ public class GraphicOverlay extends View {
      * Sets the camera attributes for size and facing direction, which informs how to transform image
      * coordinates later.
      */
-
-    /*
     public void setCameraInfo(CameraSource cameraSource) {
         Size previewSize = cameraSource.getPreviewSize();
         if (isPortraitMode(getContext())) {
@@ -101,7 +100,7 @@ public class GraphicOverlay extends View {
             previewWidth = previewSize.getWidth();
             previewHeight = previewSize.getHeight();
         }
-    }*/
+    }
 
     public float translateX(float x) {
         return x * widthScaleFactor;

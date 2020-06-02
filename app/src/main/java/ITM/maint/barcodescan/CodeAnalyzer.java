@@ -53,7 +53,7 @@ public class CodeAnalyzer implements ImageAnalysis.Analyzer {
         ORIENTATIONS.append(Surface.ROTATION_270, 180);
     }
 
-    public CodeAnalyzer(Context context, GraphicOverlay graphicOverlay,  Executor executor, WorkflowModel workflowModel) {
+    public CodeAnalyzer(Context context,  Executor executor, WorkflowModel workflowModel) {
         this.context = context;
         this.executor = executor;
         this.graphicOverlay = graphicOverlay;
