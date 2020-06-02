@@ -6,15 +6,19 @@ import android.graphics.ImageFormat;
 import android.graphics.Point;
 import android.graphics.Rect;
 import android.graphics.RectF;
+import android.media.Image;
 import android.util.Log;
 import android.util.SparseIntArray;
 import android.view.Surface;
 import android.view.WindowManager;
 
+import androidx.annotation.GuardedBy;
+import androidx.annotation.MainThread;
 import androidx.annotation.NonNull;
 import androidx.annotation.experimental.UseExperimental;
 import androidx.camera.core.ImageAnalysis;
 import androidx.camera.core.ImageProxy;
+import androidx.camera.view.PreviewView;
 
 import com.google.android.gms.tasks.Task;
 import com.google.firebase.ml.vision.FirebaseVision;
@@ -39,8 +43,12 @@ public class CodeAnalyzer implements ImageAnalysis.Analyzer {
     public static final String TAG = "CodeAnalyzer";
     private Context context;
     private Executor executor;
+
+    @GuardedBy("this")
     private GraphicOverlay graphicOverlay;
+    @GuardedBy("this")
     private final CameraReticleAnimator cameraReticleAnimator;
+
     private FirebaseVisionBarcodeDetector barcodeDetector;
     private WorkflowModel workflowModel;
 
@@ -53,12 +61,19 @@ public class CodeAnalyzer implements ImageAnalysis.Analyzer {
         ORIENTATIONS.append(Surface.ROTATION_270, 180);
     }
 
-    public CodeAnalyzer(Context context, GraphicOverlay graphicOverlay,  Executor executor, WorkflowModel workflowModel) {
+    public CodeAnalyzer(Context context, GraphicOverlay graphicOverlay, Executor executor, WorkflowModel workflowModel) {
         this.context = context;
         this.executor = executor;
         this.graphicOverlay = graphicOverlay;
         this.cameraReticleAnimator = new CameraReticleAnimator(graphicOverlay);
         this.workflowModel = workflowModel;
+
+        FirebaseVisionBarcodeDetectorOptions options =
+                new FirebaseVisionBarcodeDetectorOptions.Builder()
+                        .setBarcodeFormats(FirebaseVisionBarcode.FORMAT_QR_CODE)
+                        .build();
+        barcodeDetector = FirebaseVision.getInstance().getVisionBarcodeDetector(options);
+
     }
 
     private int getFirebaseRotation(Context context) {
@@ -81,63 +96,61 @@ public class CodeAnalyzer implements ImageAnalysis.Analyzer {
 
     @Override
     @UseExperimental(markerClass = androidx.camera.core.ExperimentalGetImage.class)
-    public void analyze(@NonNull ImageProxy image) {
-        if (image == null || image.getImage() == null) {
+    public void analyze(@NonNull ImageProxy imageProxy) {
+
+        Image image = imageProxy.getImage();
+        if (image == null) {
+            imageProxy.close();
             return;
         }
 
-
-        FirebaseVisionBarcodeDetectorOptions options =
-                new FirebaseVisionBarcodeDetectorOptions.Builder()
-                        .setBarcodeFormats(FirebaseVisionBarcode.FORMAT_ALL_FORMATS)
-                        .build();
-        barcodeDetector = FirebaseVision.getInstance().getVisionBarcodeDetector(options);
-
-        FirebaseVisionImage visionImage = FirebaseVisionImage.fromMediaImage(image.getImage(), ImageFormat.YUV_420_888 );
+        FirebaseVisionImage visionImage = FirebaseVisionImage.fromMediaImage(image, getFirebaseRotation(context));
 
         Task<List<FirebaseVisionBarcode>> task;
         task = barcodeDetector.detectInImage(visionImage);
         task.addOnSuccessListener(this.executor, barcodes -> {
-                    if (!barcodes.isEmpty()) {
-                        FirebaseVisionBarcode barcodeInCenter = null;
-                        for (FirebaseVisionBarcode barcode : barcodes) {
-                            RectF box = graphicOverlay.translateRect(barcode.getBoundingBox());
-                            if (box.contains(graphicOverlay.getWidth() / 2f, graphicOverlay.getHeight() / 2f)) {
-                                barcodeInCenter = barcode;
-                                break;
-                            }
-
-                            graphicOverlay.clear();
-                            if (barcodeInCenter == null) {
-                                cameraReticleAnimator.start();
-                                graphicOverlay.add(new BarcodeReticleGraphic(graphicOverlay, cameraReticleAnimator));
-                                workflowModel.setWorkflowState(WorkflowState.DETECTING);
-                            } else {
-                                cameraReticleAnimator.cancel();
-                                float sizeProgress =
-                                        PreferenceUtils.getProgressToMeetBarcodeSizeRequirement(graphicOverlay, barcodeInCenter);
-                                if (sizeProgress < 1) {
-                                    // Barcode in the camera view is too small, so prompt user to move camera closer.
-                                    graphicOverlay.add(new BarcodeConfirmingGraphic(graphicOverlay, barcodeInCenter));
-                                    workflowModel.setWorkflowState(WorkflowState.CONFIRMING);
-                                } else {
-                                    // Barcode size in the camera view is sufficient.
-                                    if (PreferenceUtils.shouldDelayLoadingBarcodeResult(graphicOverlay.getContext())) {
-                                        ValueAnimator loadingAnimator = createLoadingAnimator(graphicOverlay, barcodeInCenter);
-                                        loadingAnimator.start();
-                                        graphicOverlay.add(new BarcodeLoadingGraphic(graphicOverlay, loadingAnimator));
-                                        workflowModel.setWorkflowState(WorkflowState.SEARCHING);
-                                    } else {
-                                        workflowModel.setWorkflowState(WorkflowState.DETECTED);
-                                        workflowModel.detectedBarcode.setValue(barcodeInCenter);
-                                    }
-                                }
-                            }
-                            graphicOverlay.invalidate();
-
-                        }
-                    }
+                drawGraphicOverlay(barcodes);
                 });
+        imageProxy.close();
+    }
+
+    @MainThread
+    private void drawGraphicOverlay(List<FirebaseVisionBarcode> barcodes){
+            FirebaseVisionBarcode barcodeInCenter = null;
+            for (FirebaseVisionBarcode barcode : barcodes) {
+                RectF box = graphicOverlay.translateRect(barcode.getBoundingBox());
+                if (box.contains(graphicOverlay.getWidth() / 2f, graphicOverlay.getHeight() / 2f)) {
+                    barcodeInCenter = barcode;
+                    break;
+                }
+            }
+            graphicOverlay.clear();
+            if (barcodeInCenter == null) {
+                cameraReticleAnimator.start();
+                graphicOverlay.add(new BarcodeReticleGraphic(graphicOverlay, cameraReticleAnimator));
+                workflowModel.setWorkflowState(WorkflowState.DETECTING);
+            } else {
+                cameraReticleAnimator.cancel();
+                float sizeProgress =
+                        PreferenceUtils.getProgressToMeetBarcodeSizeRequirement(graphicOverlay, barcodeInCenter);
+                if (sizeProgress < 1) {
+                    // Barcode in the camera view is too small, so prompt user to move camera closer.
+                    graphicOverlay.add(new BarcodeConfirmingGraphic(graphicOverlay, barcodeInCenter));
+                    workflowModel.setWorkflowState(WorkflowState.CONFIRMING);
+                } else {
+                    // Barcode size in the camera view is sufficient.
+                    if (PreferenceUtils.shouldDelayLoadingBarcodeResult(graphicOverlay.getContext())) {
+                        ValueAnimator loadingAnimator = createLoadingAnimator(graphicOverlay, barcodeInCenter);
+                        loadingAnimator.start();
+                        graphicOverlay.add(new BarcodeLoadingGraphic(graphicOverlay, loadingAnimator));
+                        workflowModel.setWorkflowState(WorkflowState.SEARCHING);
+                    } else {
+                        workflowModel.setWorkflowState(WorkflowState.DETECTED);
+                        workflowModel.detectedBarcode.setValue(barcodeInCenter);
+                    }
+                }
+            }
+            graphicOverlay.invalidate();
     }
 
     private ValueAnimator createLoadingAnimator(
@@ -150,7 +163,7 @@ public class CodeAnalyzer implements ImageAnalysis.Analyzer {
                     if (Float.compare((float) loadingAnimator.getAnimatedValue(), endProgress) >= 0) {
                         graphicOverlay.clear();
                     } else {
-                        graphicOverlay.invalidate();
+                        graphicOverlay.postInvalidate();
                     }
                 });
         return loadingAnimator;

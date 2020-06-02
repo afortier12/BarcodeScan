@@ -1,5 +1,3 @@
-package ITM.maint.barcodescan.common;
-
 // Copyright 2018 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,11 +12,13 @@ package ITM.maint.barcodescan.common;
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+package ITM.maint.barcodescan.common;
 
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Context;
+import android.content.res.Configuration;
 import android.graphics.ImageFormat;
 import android.graphics.SurfaceTexture;
 import android.hardware.Camera;
@@ -32,6 +32,7 @@ import android.view.WindowManager;
 
 import com.google.android.gms.common.images.Size;
 
+
 import java.io.IOException;
 import java.lang.Thread.State;
 import java.nio.ByteBuffer;
@@ -40,7 +41,13 @@ import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 
+import androidx.camera.core.CameraSelector;
+
+import androidx.camera.core.Preview;
+import androidx.camera.view.PreviewView;
+
 import ITM.maint.barcodescan.common.preferences.PreferenceUtils;
+
 
 /**
  * Manages the camera and allows UI updates on top of it (e.g. overlaying extra Graphics or
@@ -50,16 +57,18 @@ import ITM.maint.barcodescan.common.preferences.PreferenceUtils;
 @SuppressLint("MissingPermission")
 public class CameraSource {
     @SuppressLint("InlinedApi")
-    public static final int CAMERA_FACING_BACK = CameraInfo.CAMERA_FACING_BACK;
+    public static final int CAMERA_FACING_BACK = CameraSelector.LENS_FACING_BACK;
 
     @SuppressLint("InlinedApi")
-    public static final int CAMERA_FACING_FRONT = CameraInfo.CAMERA_FACING_FRONT;
+    public static final int CAMERA_FACING_FRONT = CameraSelector.LENS_FACING_BACK;
 
     public static final int IMAGE_FORMAT = ImageFormat.NV21;
+    private static final int MIN_CAMERA_PREVIEW_WIDTH = 400;
+    private static final int MAX_CAMERA_PREVIEW_WIDTH = 1300;
     public static final int DEFAULT_REQUESTED_CAMERA_PREVIEW_WIDTH = 480;
     public static final int DEFAULT_REQUESTED_CAMERA_PREVIEW_HEIGHT = 360;
 
-    private static final String TAG = "MIDemoApp:CameraSource";
+    private static final String TAG = "CameraSource";
 
     /**
      * The dummy surface texture must be assigned a chosen name. Since we never use an OpenGL context,
@@ -75,8 +84,6 @@ public class CameraSource {
     private static final float ASPECT_RATIO_TOLERANCE = 0.01f;
 
     protected Activity activity;
-
-    private Camera camera;
 
     private int facing = CAMERA_FACING_BACK;
 
@@ -96,6 +103,8 @@ public class CameraSource {
     // references maintained to them.
     private SurfaceTexture dummySurfaceTexture;
     private final GraphicOverlay graphicOverlay;
+    private Preview preview;
+    private androidx.camera.core.Camera camera;
 
     // True if a SurfaceTexture is being used for the preview, false if a SurfaceHolder is being
     // used for the preview.  We want to be compatible back to Gingerbread, but SurfaceTexture
@@ -104,13 +113,6 @@ public class CameraSource {
     // want to display a preview we use a SurfaceTexture if we are running at least Honeycomb.
     private boolean usingSurfaceTexture;
 
-    /**
-     * Dedicated thread and associated runnable for calling into the detector with frames, as the
-     * frames become available from the camera.
-     */
-    private Thread processingThread;
-
-    private final FrameProcessingRunnable processingRunnable;
 
     private final Object processorLock = new Object();
     // @GuardedBy("processorLock")
@@ -127,11 +129,12 @@ public class CameraSource {
      */
     private final Map<byte[], ByteBuffer> bytesToByteBuffer = new IdentityHashMap<>();
 
-    public CameraSource(Activity activity, GraphicOverlay overlay) {
+    public CameraSource(Activity activity, GraphicOverlay overlay, androidx.camera.core.Camera camera, Preview preview) {
         this.activity = activity;
         graphicOverlay = overlay;
         graphicOverlay.clear();
-        processingRunnable = new FrameProcessingRunnable();
+        this.camera = camera;
+        this.preview = preview;
     }
 
     // ==============================================================================================
@@ -142,7 +145,6 @@ public class CameraSource {
     public void release() {
         synchronized (processorLock) {
             stop();
-            processingRunnable.release();
             cleanScreen();
 
             if (frameProcessor != null) {
@@ -163,41 +165,9 @@ public class CameraSource {
         if (camera != null) {
             return this;
         }
-
-        camera = createCamera();
-        dummySurfaceTexture = new SurfaceTexture(DUMMY_TEXTURE_NAME);
-        camera.setPreviewTexture(dummySurfaceTexture);
+        createCamera(camera);
         usingSurfaceTexture = true;
-        camera.startPreview();
 
-        processingThread = new Thread(processingRunnable);
-        processingRunnable.setActive(true);
-        processingThread.start();
-        return this;
-    }
-
-    /**
-     * Opens the camera and starts sending preview frames to the underlying detector. The supplied
-     * surface holder is used for the preview so frames can be displayed to the user.
-     *
-     * @param surfaceHolder the surface holder to use for the preview frames
-     * @throws IOException if the supplied surface holder could not be used as the preview display
-     */
-    @RequiresPermission(Manifest.permission.CAMERA)
-    public synchronized CameraSource start(SurfaceHolder surfaceHolder) throws IOException {
-        if (camera != null) {
-            return this;
-        }
-
-        camera = createCamera();
-        camera.setPreviewDisplay(surfaceHolder);
-        camera.startPreview();
-
-        processingThread = new Thread(processingRunnable);
-        processingRunnable.setActive(true);
-        processingThread.start();
-
-        usingSurfaceTexture = false;
         return this;
     }
 
@@ -205,38 +175,17 @@ public class CameraSource {
      * Closes the camera and stops sending frames to the underlying frame detector.
      *
      * <p>This camera source may be restarted again by calling {@link #start()} or {@link
-     * #start(SurfaceHolder)}.
+     * #*start(SurfaceHolder)}.
      *
      * <p>Call {@link #release()} instead to completely shut down this camera source and release the
      * resources of the underlying detector.
      */
     public synchronized void stop() {
-        processingRunnable.setActive(false);
-        if (processingThread != null) {
-            try {
-                // Wait for the thread to complete to ensure that we can't have multiple threads
-                // executing at the same time (i.e., which would happen if we called start too
-                // quickly after stop).
-                processingThread.join();
-            } catch (InterruptedException e) {
-                Log.d(TAG, "Frame processing thread interrupted on release.");
-            }
-            processingThread = null;
-        }
 
         if (camera != null) {
-            camera.stopPreview();
-            camera.setPreviewCallbackWithBuffer(null);
-            try {
-                if (usingSurfaceTexture) {
-                    camera.setPreviewTexture(null);
-                } else {
-                    camera.setPreviewDisplay(null);
-                }
-            } catch (Exception e) {
-                Log.e(TAG, "Failed to clear camera preview: " + e);
-            }
-            camera.release();
+
+            //camera.setPreviewCallbackWithBuffer(null);
+            //camera.release();
             camera = null;
         }
 
@@ -271,97 +220,88 @@ public class CameraSource {
      * @throws IOException if camera cannot be found or preview cannot be processed
      */
     @SuppressLint("InlinedApi")
-    private Camera createCamera() throws IOException {
-        int requestedCameraId = getIdForRequestedCamera(facing);
-        if (requestedCameraId == -1) {
-            throw new IOException("Could not find requested camera.");
-        }
-        Camera camera = Camera.open(requestedCameraId);
+    private void createCamera() throws IOException {
 
-       /* SizePair sizePair = PreferenceUtils.getCameraPreviewSizePair(activity, requestedCameraId);
-        if (sizePair == null) {
-            sizePair =
-                    selectSizePair(
-                            camera,
-                            DEFAULT_REQUESTED_CAMERA_PREVIEW_WIDTH,
-                            DEFAULT_REQUESTED_CAMERA_PREVIEW_HEIGHT);
-        }
+        setPreviewAndPictureSize();
+        setRotation();
 
-        if (sizePair == null) {
-            throw new IOException("Could not find suitable preview size.");
-        }
-
-        previewSize = sizePair.preview;
-        Log.v(TAG, "Camera preview size: " + previewSize);
-
-        int[] previewFpsRange = selectPreviewFpsRange(camera, requestedFps);
-        if (previewFpsRange == null) {
-            throw new IOException("Could not find suitable preview frames per second range.");
-        }
-
-        Camera.Parameters parameters = camera.getParameters();
-
-        Size pictureSize = sizePair.picture;
-        if (pictureSize != null) {
-            Log.v(TAG, "Camera picture size: " + pictureSize);
-            parameters.setPictureSize(pictureSize.getWidth(), pictureSize.getHeight());
-        }
-        parameters.setPreviewSize(previewSize.getWidth(), previewSize.getHeight());
-        parameters.setPreviewFpsRange(
-                previewFpsRange[Camera.Parameters.PREVIEW_FPS_MIN_INDEX],
-                previewFpsRange[Camera.Parameters.PREVIEW_FPS_MAX_INDEX]);
-        // Use YV12 so that we can exercise YV12->NV21 auto-conversion logic for OCR detection
-        parameters.setPreviewFormat(IMAGE_FORMAT);
-
-        setRotation(camera, parameters, requestedCameraId);
-
-        if (requestedAutoFocus) {
-            if (parameters
-                    .getSupportedFocusModes()
-                    .contains(Camera.Parameters.FOCUS_MODE_CONTINUOUS_VIDEO)) {
-                parameters.setFocusMode(Camera.Parameters.FOCUS_MODE_CONTINUOUS_VIDEO);
-            } else {
-                Log.i(TAG, "Camera auto focus is not supported on this device.");
-            }
-        }
-
-        camera.setParameters(parameters);
-*/
-        // Four frame buffers are needed for working with the camera:
-        //
-        //   one for the frame that is currently being executed upon in doing detection
-        //   one for the next pending frame to process immediately upon completing detection
-        //   two for the frames that the camera uses to populate future preview images
-        //
-        // Through trial and error it appears that two free buffers, in addition to the two buffers
-        // used in this code, are needed for the camera to work properly.  Perhaps the camera has
-        // one thread for acquiring images, and another thread for calling into user code.  If only
-        // three buffers are used, then the camera will spew thousands of warning messages when
-        // detection takes a non-trivial amount of time.
-        camera.setPreviewCallbackWithBuffer(new CameraPreviewCallback());
-        camera.addCallbackBuffer(createPreviewBuffer(previewSize));
-        camera.addCallbackBuffer(createPreviewBuffer(previewSize));
-        camera.addCallbackBuffer(createPreviewBuffer(previewSize));
-        camera.addCallbackBuffer(createPreviewBuffer(previewSize));
-
-        return camera;
     }
 
     /**
      * Gets the id for the camera specified by the direction it is facing. Returns -1 if no such
      * camera was found.
      *
-     * @param facing the desired camera (front-facing or rear-facing)
+     * @param *facing the desired camera (front-facing or rear-facing)
      */
-    private static int getIdForRequestedCamera(int facing) {
-        CameraInfo cameraInfo = new CameraInfo();
-        for (int i = 0; i < Camera.getNumberOfCameras(); ++i) {
-            Camera.getCameraInfo(i, cameraInfo);
-            if (cameraInfo.facing == facing) {
-                return i;
+    private void setPreviewAndPictureSize() throws IOException {
+        // Gives priority to the preview size specified by the user if exists.
+        SizePair sizePair = PreferenceUtils.getUserSpecifiedPreviewSize(activity.getApplicationContext());
+        if (sizePair == null) {
+            // Camera preview size is based on the landscape mode, so we need to also use the aspect
+            // ration of display in the same mode for comparison.
+            float displayAspectRatioInLandscape;
+            if (isPortraitMode(graphicOverlay.getContext())) {
+                displayAspectRatioInLandscape =
+                        (float) graphicOverlay.getHeight() / graphicOverlay.getWidth();
+            } else {
+                displayAspectRatioInLandscape =
+                        (float) graphicOverlay.getWidth() / graphicOverlay.getHeight();
             }
+            sizePair = selectSizePair(displayAspectRatioInLandscape);
         }
-        return -1;
+        if (sizePair == null) {
+            throw new IOException("Could not find suitable preview size.");
+        }
+
+        previewSize = sizePair.preview;
+        Log.v(TAG, "Camera preview size: " + previewSize);
+        parameters.setPreviewSize(previewSize.getWidth(), previewSize.getHeight());
+        PreferenceUtils.saveStringPreference(
+                context, R.string.pref_key_rear_camera_preview_size, previewSize.toString());
+
+        Size pictureSize = sizePair.picture;
+        if (pictureSize != null) {
+            Log.v(TAG, "Camera picture size: " + pictureSize);
+            parameters.setPictureSize(pictureSize.getWidth(), pictureSize.getHeight());
+            PreferenceUtils.saveStringPreference(
+                    context, R.string.pref_key_rear_camera_picture_size, pictureSize.toString());
+        }
+    }
+
+    /**
+     * Calculates the correct rotation for the given camera id and sets the rotation in the
+     * parameters. It also sets the camera's display orientation and rotation.
+     *
+     * @param parameters the camera parameters for which to set the rotation.
+     */
+    private void setRotation(Camera camera, Camera.Parameters parameters) {
+        WindowManager windowManager = (WindowManager) activity.getApplicationContext().getSystemService(Context.WINDOW_SERVICE);
+        int deviceRotation = windowManager.getDefaultDisplay().getRotation();
+        int degrees = 0;
+        switch (deviceRotation) {
+            case Surface.ROTATION_0:
+                degrees = 0;
+                break;
+            case Surface.ROTATION_90:
+                degrees = 90;
+                break;
+            case Surface.ROTATION_180:
+                degrees = 180;
+                break;
+            case Surface.ROTATION_270:
+                degrees = 270;
+                break;
+            default:
+                Log.e(TAG, "Bad device rotation value: " + deviceRotation);
+        }
+
+        CameraInfo cameraInfo = new CameraInfo();
+        Camera.getCameraInfo(CAMERA_FACING_BACK, cameraInfo);
+        int angle = (cameraInfo.orientation - degrees + 360) % 360;
+        // This corresponds to the rotation constants in FirebaseVisionImageMetadata.
+        this.rotation = angle / 90;
+        camera.setDisplayOrientation(angle);
+        parameters.setRotation(angle);
     }
 
     /**
@@ -372,31 +312,35 @@ public class CameraSource {
      * ratio. On some hardware, if you would only set the preview size, you will get a distorted
      * image.
      *
-     * @param camera the camera to select a preview size from
-     * @param desiredWidth the desired width of the camera preview frames
-     * @param desiredHeight the desired height of the camera preview frames
+     * @param *camera the camera to select a preview size from
+     * @param *desiredWidth the desired width of the camera preview frames
+     * @param *desiredHeight the desired height of the camera preview frames
      * @return the selected preview and picture size pair
      */
-    public static SizePair selectSizePair(Camera camera, int desiredWidth, int desiredHeight) {
-        List<SizePair> validPreviewSizes = generateValidPreviewSizeList(camera);
+    private static SizePair selectSizePair(float displayAspectRatioInLandscape) {
+        List<SizePair> validPreviewSizes = generateValidPreviewSizeList();
 
-        // The method for selecting the best size is to minimize the sum of the differences between
-        // the desired values and the actual values for width and height.  This is certainly not the
-        // only way to select the best size, but it provides a decent tradeoff between using the
-        // closest aspect ratio vs. using the closest pixel area.
         SizePair selectedPair = null;
-        int minDiff = Integer.MAX_VALUE;
+        // Picks the preview size that has closest aspect ratio to display view.
+        float minAspectRatioDiff = Float.MAX_VALUE;
         for (SizePair sizePair : validPreviewSizes) {
-            Size size = sizePair.preview;
-            int diff =
-                    Math.abs(size.getWidth() - desiredWidth) + Math.abs(size.getHeight() - desiredHeight);
-            if (diff < minDiff) {
+            Size previewSize = sizePair.preview;
+            if (previewSize.getWidth() < MIN_CAMERA_PREVIEW_WIDTH
+                    || previewSize.getWidth() > MAX_CAMERA_PREVIEW_WIDTH) {
+                continue;
+            }
+
+            float previewAspectRatio = (float) previewSize.getWidth() / previewSize.getHeight();
+            float aspectRatioDiff = Math.abs(displayAspectRatioInLandscape - previewAspectRatio);
+            if (Math.abs(aspectRatioDiff - minAspectRatioDiff) < Utils.ASPECT_RATIO_TOLERANCE) {
+                if (selectedPair == null || selectedPair.preview.getWidth() < sizePair.preview.getWidth()) {
+                    selectedPair = sizePair;
+                }
+            } else if (aspectRatioDiff < minAspectRatioDiff) {
+                minAspectRatioDiff = aspectRatioDiff;
                 selectedPair = sizePair;
-                minDiff = diff;
             }
         }
-
-        return selectedPair;
     }
 
     /**
@@ -740,5 +684,11 @@ public class CameraSource {
     /** Cleans up graphicOverlay and child classes can do their cleanups as well . */
     private void cleanScreen() {
         graphicOverlay.clear();
+    }
+
+
+    public static boolean isPortraitMode(Context context) {
+        return context.getResources().getConfiguration().orientation
+                == Configuration.ORIENTATION_PORTRAIT;
     }
 }

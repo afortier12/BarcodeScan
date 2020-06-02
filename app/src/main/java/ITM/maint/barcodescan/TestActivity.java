@@ -8,6 +8,7 @@ import android.content.pm.PackageManager;
 
 import android.os.Bundle;
 import android.util.Log;
+import android.util.Size;
 import android.view.View;
 import android.widget.Toast;
 
@@ -32,6 +33,8 @@ import java.util.concurrent.ExecutionException;
 
 import javax.inject.Inject;
 
+import ITM.maint.barcodescan.common.CameraPreview;
+import ITM.maint.barcodescan.common.CameraSource;
 import ITM.maint.barcodescan.common.GraphicOverlay;
 import ITM.maint.barcodescan.common.WorkflowModel;
 import ITM.maint.barcodescan.common.WorkflowModel.WorkflowState;
@@ -42,8 +45,10 @@ public class TestActivity extends DaggerAppCompatActivity implements ActivityCom
 
     private static final String TAG = "TestActivity";
     private ListenableFuture<ProcessCameraProvider> cameraProviderFuture;
+    private CameraSource cameraSource;
     private Preview preview;
-    private PreviewView previewView;
+    private CameraPreview previewView;
+    private GraphicOverlay graphicOverlay;
     private View settingsButton;
     private View flashButton;
     private Chip promptChip;
@@ -61,8 +66,9 @@ public class TestActivity extends DaggerAppCompatActivity implements ActivityCom
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_live_barcode);
-
         previewView=findViewById(R.id.camera_preview);
+        graphicOverlay = findViewById(R.id.camera_preview_graphic_overlay);
+        graphicOverlay.setOnClickListener(this);
 
         promptChip = findViewById(R.id.bottom_prompt_chip);
         promptChipAnimator =
@@ -85,23 +91,32 @@ public class TestActivity extends DaggerAppCompatActivity implements ActivityCom
     @Override
     protected void onResume() {
         super.onResume();
+        workflowModel.markCameraFrozen();
+        settingsButton.setEnabled(true);
+        currentWorkflowState = WorkflowState.NOT_STARTED;
+        cameraSource.setFrameProcessor(new BarcodeScanningProcessor());
+        workflowModel.setWorkflowState(WorkflowState.DETECTING);
 
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        currentWorkflowState = WorkflowState.NOT_STARTED;
     }
 
     private void bindPreview(@NonNull ProcessCameraProvider cameraProvider) {
 
         preview = new Preview.Builder().build();
-        previewView.setPreferredImplementationMode(PreviewView.ImplementationMode.SURFACE_VIEW);
-        preview.setSurfaceProvider( previewView.createSurfaceProvider());
-
-        GraphicOverlay graphicOverlay = findViewById(R.id.camera_preview_graphic_overlay);
-        graphicOverlay.setOnClickListener(this);
+        previewView.setPreferredImplementationMode(PreviewView.ImplementationMode.TEXTURE_VIEW);
+        preview.setSurfaceProvider(previewView.createSurfaceProvider());
 
         ImageAnalysis imageAnalysis = new ImageAnalysis.Builder()
-            .setImageQueueDepth(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-            .build();
+                .setTargetResolution(new Size(640, 480))
+                .setImageQueueDepth(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                .build();
 
-        CodeAnalyzer codeAnalyzer = new CodeAnalyzer(this, graphicOverlay, appExecutor.detectorThread(), workflowModel);
+        CodeAnalyzer codeAnalyzer = new CodeAnalyzer(this, graphicOverlay, appExecutor.animationThread(), workflowModel);
         imageAnalysis.setAnalyzer(appExecutor.analyzerThread(), codeAnalyzer);
 
         CameraSelector cameraSelector = new CameraSelector.Builder()
@@ -109,6 +124,8 @@ public class TestActivity extends DaggerAppCompatActivity implements ActivityCom
                 .build();
         //bind to lifecycle:
         camera = cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalysis);
+
+        cameraSource = new CameraSource(camera);
 
     }
 
@@ -123,12 +140,14 @@ public class TestActivity extends DaggerAppCompatActivity implements ActivityCom
                 @Override
                 public void run() {
                     try {
+                        workflowModel.markCameraLive();
                         ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
                         bindPreview(cameraProvider);
                     } catch (ExecutionException | InterruptedException e) {
                         // No errors need to be handled for this Future
                         // This should never be reached
                         e.printStackTrace();
+                        cameraSource = null;
                     }
                 }
             },appExecutor.mainThread());  //ContextCompat.getMainExecutor(this));
@@ -187,8 +206,15 @@ public class TestActivity extends DaggerAppCompatActivity implements ActivityCom
     }
 
     private void startCameraPreview() {
-        if (!workflowModel.isCameraLive() && camera != null) {
-            workflowModel.markCameraLive();
+        if (!workflowModel.isCameraLive() && cameraSource != null) {
+            try {
+                workflowModel.markCameraLive();
+                previewView.start(cameraSource);
+            } catch (IOException e) {
+                Log.e(TAG, "Failed to start camera preview!", e);
+                cameraSource.release();
+                cameraSource = null;
+            }
         }
     }
 
@@ -196,6 +222,7 @@ public class TestActivity extends DaggerAppCompatActivity implements ActivityCom
         if (workflowModel.isCameraLive()) {
             workflowModel.markCameraFrozen();
             flashButton.setSelected(false);
+            previewView.stop();
         }
     }
 
@@ -220,22 +247,18 @@ public class TestActivity extends DaggerAppCompatActivity implements ActivityCom
                         case DETECTING:
                             promptChip.setVisibility(View.VISIBLE);
                             promptChip.setText(R.string.prompt_point_at_a_barcode);
-                            startCameraPreview();
                             break;
                         case CONFIRMING:
                             promptChip.setVisibility(View.VISIBLE);
                             promptChip.setText(R.string.prompt_move_camera_closer);
-                            startCameraPreview();
                             break;
                         case SEARCHING:
                             promptChip.setVisibility(View.VISIBLE);
                             promptChip.setText(R.string.prompt_searching);
-                            stopCameraPreview();
                             break;
                         case DETECTED:
                         case SEARCHED:
                             promptChip.setVisibility(View.GONE);
-                            stopCameraPreview();
                             break;
                         default:
                             promptChip.setVisibility(View.GONE);
