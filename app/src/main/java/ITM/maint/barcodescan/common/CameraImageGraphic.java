@@ -1,10 +1,10 @@
 package ITM.maint.barcodescan.common;
 
+
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Rect;
 import ITM.maint.barcodescan.common.GraphicOverlay.Graphic;
-
 
 /** Draw camera image to background. */
 public class CameraImageGraphic extends Graphic {
@@ -21,4 +21,3 @@ public class CameraImageGraphic extends Graphic {
         canvas.drawBitmap(bitmap, null, new Rect(0, 0, canvas.getWidth(), canvas.getHeight()), null);
     }
 }
-

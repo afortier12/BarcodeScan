@@ -22,13 +22,9 @@ import android.graphics.Canvas;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.util.AttributeSet;
+import android.util.Size;
 import android.view.View;
-import android.view.ViewGroup;
 
-import androidx.camera.core.CameraInfo;
-import androidx.camera.core.CameraSelector;
-
-import com.google.android.gms.common.images.Size;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -41,8 +37,8 @@ import java.util.List;
  * idea is that detection items are expressed in terms of a preview size, but need to be scaled up
  * to the full view size, and also mirrored in the case of the front-facing camera.
  *
- * <p>Associated {@link Graphic} items should use {@link #*translateX(float)} and {@link
- * #*translateY(float)} to convert to view coordinate from the preview's coordinate.
+ * <p>Associated {@link Graphic} items should use {@link #translateX(float)} and {@link
+ * #translateY(float)} to convert to view coordinate from the preview's coordinate.
  */
 public class GraphicOverlay extends View {
     private final Object lock = new Object();
@@ -51,7 +47,6 @@ public class GraphicOverlay extends View {
     private float widthScaleFactor = 1.0f;
     private int previewHeight;
     private float heightScaleFactor = 1.0f;
-    private int facing = CameraSelector.LENS_FACING_BACK;
     private final List<Graphic> graphics = new ArrayList<>();
 
     /**
@@ -68,67 +63,12 @@ public class GraphicOverlay extends View {
             this.context = overlay.getContext();
         }
 
-        /**
-         * Draw the graphic on the supplied canvas. Drawing should use the following methods to convert
-         * to view coordinates for the graphics that are drawn:
-         *
-         * <ol>
-         *   <li>{@link Graphic#scaleX(float)} and {@link Graphic#scaleY(float)} adjust the size of the
-         *       supplied value from the preview scale to the view scale.
-         *   <li>{@link Graphic#translateX(float)} and {@link Graphic#translateY(float)} adjust the
-         *       coordinate from the preview's coordinate system to the view coordinate system.
-         * </ol>
-         *
-         * @param canvas drawing canvas
-         */
-        public abstract void draw(Canvas canvas);
-
-        /**
-         * Adjusts a horizontal value of the supplied value from the preview scale to the view scale.
-         */
-        public float scaleX(float horizontal) {
-            return horizontal * overlay.widthScaleFactor;
-        }
-
-        /** Adjusts a vertical value of the supplied value from the preview scale to the view scale. */
-        public float scaleY(float vertical) {
-            return vertical * overlay.heightScaleFactor;
-        }
-
-        /** Returns the application context of the app. */
-        public Context getApplicationContext() {
-            return overlay.getContext().getApplicationContext();
-        }
-
-        /**
-         * Adjusts the x coordinate from the preview's coordinate system to the view coordinate system.
-         */
-        public float translateX(float x) {
-            if (overlay.facing == CameraSource.CAMERA_FACING_FRONT) {
-                return overlay.getWidth() - scaleX(x);
-            } else {
-                return scaleX(x);
-            }
-        }
-
-        /**
-         * Adjusts the y coordinate from the preview's coordinate system to the view coordinate system.
-         */
-        public float translateY(float y) {
-            return scaleY(y);
-        }
-
-        public void postInvalidate() {
-            overlay.postInvalidate();
-        }
+        /** Draws the graphic on the supplied canvas. */
+        protected abstract void draw(Canvas canvas);
     }
 
     public GraphicOverlay(Context context, AttributeSet attrs) {
         super(context, attrs);
-    }
-
-    public float translateX(float x){
-       return this.translateX(x);
     }
 
     /** Removes all graphics from the overlay. */
@@ -146,25 +86,40 @@ public class GraphicOverlay extends View {
         }
     }
 
-    /** Removes a graphic from the overlay. */
-    public void remove(Graphic graphic) {
-        synchronized (lock) {
-            graphics.remove(graphic);
-        }
-        postInvalidate();
-    }
-
     /**
      * Sets the camera attributes for size and facing direction, which informs how to transform image
      * coordinates later.
      */
-    public void setCameraInfo(int previewWidth, int previewHeight, int facing) {
-        synchronized (lock) {
-            this.previewWidth = previewWidth;
-            this.previewHeight = previewHeight;
-            this.facing = facing;
+    public void setCameraInfo(CameraSource cameraSource) {
+        Size previewSize = cameraSource.getPreviewSize();
+        if (isPortraitMode(getContext())) {
+            // Swap width and height when in portrait, since camera's natural orientation is landscape.
+            previewWidth = previewSize.getHeight();
+            previewHeight = previewSize.getWidth();
+        } else {
+            previewWidth = previewSize.getWidth();
+            previewHeight = previewSize.getHeight();
         }
-        postInvalidate();
+    }
+
+    public float translateX(float x) {
+        return x * widthScaleFactor;
+    }
+
+    public float translateY(float y) {
+        return y * heightScaleFactor;
+    }
+
+    /**
+     * Adjusts the {@code rect}'s coordinate from the preview's coordinate system to the view
+     * coordinate system.
+     */
+    public RectF translateRect(Rect rect) {
+        return new RectF(
+                translateX(rect.left),
+                translateY(rect.top),
+                translateX(rect.right),
+                translateY(rect.bottom));
     }
 
     /** Draws the overlay with its associated graphic objects. */
@@ -172,12 +127,12 @@ public class GraphicOverlay extends View {
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
 
-        synchronized (lock) {
-            if ((previewWidth != 0) && (previewHeight != 0)) {
-                widthScaleFactor = (float) getWidth() / previewWidth;
-                heightScaleFactor = (float) getHeight() / previewHeight;
-            }
+        if (previewWidth > 0 && previewHeight > 0) {
+            widthScaleFactor = (float) getWidth() / previewWidth;
+            heightScaleFactor = (float) getHeight() / previewHeight;
+        }
 
+        synchronized (lock) {
             for (Graphic graphic : graphics) {
                 graphic.draw(canvas);
             }
