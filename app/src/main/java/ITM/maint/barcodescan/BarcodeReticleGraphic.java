@@ -30,7 +30,7 @@ import ITM.maint.barcodescan.common.CameraReticleAnimator;
  * A camera reticle that locates at the center of canvas to indicate the system is active but has
  * not detected a barcode yet.
  */
-class BarcodeReticleGraphic extends BarcodeGraphicBase {
+public class BarcodeReticleGraphic extends BarcodeGraphicBase {
 
     private final CameraReticleAnimator animator;
 
@@ -39,7 +39,7 @@ class BarcodeReticleGraphic extends BarcodeGraphicBase {
     private final int rippleStrokeWidth;
     private final int rippleAlpha;
 
-    BarcodeReticleGraphic(GraphicOverlay overlay, CameraReticleAnimator animator) {
+    public BarcodeReticleGraphic(GraphicOverlay overlay, CameraReticleAnimator animator) {
         super(overlay);
         this.animator = animator;
 

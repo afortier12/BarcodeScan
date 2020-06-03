@@ -24,14 +24,14 @@ import android.graphics.PointF;
 import ITM.maint.barcodescan.common.GraphicOverlay;
 
 /** Draws the graphic to indicate the barcode result is in loading. */
-class BarcodeLoadingGraphic extends BarcodeGraphicBase {
+public class BarcodeLoadingGraphic extends BarcodeGraphicBase {
 
     private final ValueAnimator loadingAnimator;
     private final PointF[] boxClockwiseCoordinates;
     private final Point[] coordinateOffsetBits;
     private final PointF lastPathPoint = new PointF();
 
-    BarcodeLoadingGraphic(GraphicOverlay overlay, ValueAnimator loadingAnimator) {
+    public BarcodeLoadingGraphic(GraphicOverlay overlay, ValueAnimator loadingAnimator) {
         super(overlay);
 
         this.loadingAnimator = loadingAnimator;

@@ -23,11 +23,11 @@ import ITM.maint.barcodescan.common.preferences.PreferenceUtils;
 import com.google.firebase.ml.vision.barcode.FirebaseVisionBarcode;
 
 /** Guides user to move camera closer to confirm the detected barcode. */
-class BarcodeConfirmingGraphic extends BarcodeGraphicBase {
+public class BarcodeConfirmingGraphic extends BarcodeGraphicBase {
 
     private final FirebaseVisionBarcode barcode;
 
-    BarcodeConfirmingGraphic(GraphicOverlay overlay, FirebaseVisionBarcode barcode) {
+    public BarcodeConfirmingGraphic(GraphicOverlay overlay, FirebaseVisionBarcode barcode) {
         super(overlay);
         this.barcode = barcode;
     }

@@ -71,8 +71,6 @@ public class TestActivity extends DaggerAppCompatActivity implements
         GraphicOverlay graphicOverlay = findViewById(R.id.camera_preview_graphic_overlay);
         graphicOverlay.setOnClickListener(this);
 
-        preview = findViewById(R.id.camera_preview);
-
         promptChip = findViewById(R.id.bottom_prompt_chip);
         promptChipAnimator =
                 (AnimatorSet) AnimatorInflater.loadAnimator(this, R.animator.bottom_prompt_chip_enter);
@@ -87,9 +85,8 @@ public class TestActivity extends DaggerAppCompatActivity implements
 
         cameraProviderFuture = ProcessCameraProvider.getInstance(this);
 
-        cameraSource = new CameraSource(graphicOverlay, preview);
-
         setUpWorkflowModel();
+        cameraSource = new CameraSource(graphicOverlay, workflowModel);
         openCamera();
     }
 
@@ -173,7 +170,7 @@ public class TestActivity extends DaggerAppCompatActivity implements
                 public void run() {
                     try {
                         ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
-                        bindPreview(cameraProvider);
+                        //bindPreview(cameraProvider);
                     } catch (ExecutionException | InterruptedException e) {
                         // No errors need to be handled for this Future
                         // This should never be reached

@@ -17,6 +17,7 @@
 package ITM.maint.barcodescan.common;
 
 import android.Manifest;
+import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.content.Context;
 import android.content.pm.PackageManager;
@@ -32,18 +33,28 @@ import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CaptureRequest;
+import android.hardware.camera2.CaptureResult;
+import android.hardware.camera2.TotalCaptureResult;
 import android.hardware.camera2.params.StreamConfigurationMap;
+import android.media.Image;
 import android.media.ImageReader;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.util.Log;
 import android.util.Size;
+import android.util.SparseIntArray;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 
 import androidx.annotation.NonNull;
 import androidx.core.app.ActivityCompat;
 
+import com.google.android.gms.tasks.Task;
+import com.google.firebase.ml.vision.FirebaseVision;
+import com.google.firebase.ml.vision.barcode.FirebaseVisionBarcode;
+import com.google.firebase.ml.vision.barcode.FirebaseVisionBarcodeDetector;
+import com.google.firebase.ml.vision.barcode.FirebaseVisionBarcodeDetectorOptions;
+import com.google.firebase.ml.vision.common.FirebaseVisionImage;
 import com.google.firebase.ml.vision.common.FirebaseVisionImageMetadata;
 
 import java.io.IOException;
@@ -57,6 +68,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+
+import ITM.maint.barcodescan.BarcodeConfirmingGraphic;
+import ITM.maint.barcodescan.BarcodeLoadingGraphic;
+import ITM.maint.barcodescan.BarcodeReticleGraphic;
+import ITM.maint.barcodescan.R;
+import ITM.maint.barcodescan.common.preferences.PreferenceUtils;
 
 /**
  * Manages the camera and allows UI updates on top of it (e.g. overlaying extra Graphics). This
@@ -81,9 +98,20 @@ public class CameraSource {
   private static final int DEFAULT_REQUESTED_CAMERA_PREVIEW_HEIGHT = 360;
   private static final float REQUESTED_CAMERA_FPS = 30.0f;
 
+  private static final SparseIntArray ORIENTATIONS = new SparseIntArray();
+  static {
+    ORIENTATIONS.append(Surface.ROTATION_0, 90);
+    ORIENTATIONS.append(Surface.ROTATION_90, 0);
+    ORIENTATIONS.append(Surface.ROTATION_180, 270);
+    ORIENTATIONS.append(Surface.ROTATION_270, 180);
+  }
+
   private CameraSourcePreview previewView;
   private CameraDevice camera;
   private String cameraID;
+  private CaptureRequest.Builder previewRequestBuilder;
+  private CaptureRequest previewRequest;
+  private CameraCaptureSession cameraCaptureSession;
 
   @FirebaseVisionImageMetadata.Rotation
   private int rotation;
@@ -96,30 +124,133 @@ public class CameraSource {
 
   private final Context context;
   private final GraphicOverlay graphicOverlay;
+  private FirebaseVisionBarcodeDetector barcodeDetector;
+  private final CameraReticleAnimator cameraReticleAnimator;
+  private WorkflowModel workflowModel;
+  private ImageReader imageReader;
+  private Surface surface;
 
   private Handler backgroundHandler;
   private HandlerThread backgroundThread;
+
+  private final CameraCaptureSession.CaptureCallback captureCallback
+          = new CameraCaptureSession.CaptureCallback() {
+
+    private void process(CaptureResult result) {
+        int name;
+        name = 0;
+    }
+
+    @Override
+    public void onCaptureCompleted(@NonNull CameraCaptureSession session,
+                                   @NonNull CaptureRequest request,
+                                   @NonNull TotalCaptureResult result) {
+      process(result);
+    }
+
+  };
+
+  private final CameraDevice.StateCallback stateCallback = new CameraDevice.StateCallback() {
+
+    @Override
+    public void onOpened(@NonNull CameraDevice cameraDevice) {
+      release();
+      camera = cameraDevice;
+      previewView.createCameraPreviewSession(camera, surface);
+      startCameraSession(surface);
+    }
+
+    @Override
+    public void onDisconnected(@NonNull CameraDevice cameraDevice) {
+      release();
+      cameraDevice.close();
+      camera = null;
+    }
+
+    @Override
+    public void onError(@NonNull CameraDevice cameraDevice, int error) {
+      release();
+      cameraDevice.close();
+      camera = null;
+    }
+
+  };
+
 
   private final ImageReader.OnImageAvailableListener onImageAvailableListener
           = new ImageReader.OnImageAvailableListener() {
 
     @Override
     public void onImageAvailable(ImageReader reader) {
-      //mBackgroundHandler.post(new ImageSaver(reader.acquireNextImage(), mFile));
+      Image image = reader.acquireNextImage();
+      FirebaseVisionBarcodeDetectorOptions options =
+              new FirebaseVisionBarcodeDetectorOptions.Builder()
+                      .setBarcodeFormats(FirebaseVisionBarcode.FORMAT_ALL_FORMATS)
+                      .build();
+      barcodeDetector = FirebaseVision.getInstance().getVisionBarcodeDetector(options);
+
+      FirebaseVisionImage visionImage = FirebaseVisionImage.fromMediaImage(image, ImageFormat.YUV_420_888 );
+
+      Task<List<FirebaseVisionBarcode>> task;
+      task = barcodeDetector.detectInImage(visionImage);
+      task.addOnSuccessListener( barcodes -> {
+        if (!barcodes.isEmpty()) {
+          FirebaseVisionBarcode barcodeInCenter = null;
+          for (FirebaseVisionBarcode barcode : barcodes) {
+            RectF box = graphicOverlay.translateRect(barcode.getBoundingBox());
+            if (box.contains(graphicOverlay.getWidth() / 2f, graphicOverlay.getHeight() / 2f)) {
+              barcodeInCenter = barcode;
+              break;
+            }
+
+            graphicOverlay.clear();
+            if (barcodeInCenter == null) {
+              cameraReticleAnimator.start();
+              graphicOverlay.add(new BarcodeReticleGraphic(graphicOverlay, cameraReticleAnimator));
+              workflowModel.setWorkflowState(WorkflowModel.WorkflowState.DETECTING);
+            } else {
+              cameraReticleAnimator.cancel();
+              float sizeProgress =
+                      PreferenceUtils.getProgressToMeetBarcodeSizeRequirement(graphicOverlay, barcodeInCenter);
+              if (sizeProgress < 1) {
+                // Barcode in the camera view is too small, so prompt user to move camera closer.
+                graphicOverlay.add(new BarcodeConfirmingGraphic(graphicOverlay, barcodeInCenter));
+                workflowModel.setWorkflowState(WorkflowModel.WorkflowState.CONFIRMING);
+              } else {
+                // Barcode size in the camera view is sufficient.
+                if (PreferenceUtils.shouldDelayLoadingBarcodeResult(graphicOverlay.getContext())) {
+                  ValueAnimator loadingAnimator = createLoadingAnimator(graphicOverlay, barcodeInCenter);
+                  loadingAnimator.start();
+                  graphicOverlay.add(new BarcodeLoadingGraphic(graphicOverlay, loadingAnimator));
+                  workflowModel.setWorkflowState(WorkflowModel.WorkflowState.SEARCHING);
+                } else {
+                  workflowModel.setWorkflowState(WorkflowModel.WorkflowState.DETECTED);
+                  workflowModel.detectedBarcode.setValue(barcodeInCenter);
+                }
+              }
+            }
+            graphicOverlay.invalidate();
+
+          }
+        }
+      });
     }
 
   };
 
 
-  public CameraSource(GraphicOverlay graphicOverlay, CameraSourcePreview previewView) {
+  public CameraSource(GraphicOverlay graphicOverlay, WorkflowModel workFlowModel) {
     this.context = graphicOverlay.getContext();
     this.graphicOverlay = graphicOverlay;
-    this.previewView = previewView;
+    previewView = ((Activity) this.context).findViewById(R.id.camera_preview);
+    previewView.attachCamera(this);
+    this.cameraReticleAnimator = new CameraReticleAnimator(graphicOverlay);
+    this.workflowModel = workFlowModel;
   }
 
   public void start() {
     if (previewView.isSurfaceAvailable()){
-      previewView.start(getPreviewSize().getWidth(), getPreviewSize().getHeight());
+      openCamera(getPreviewSize().getWidth(), getPreviewSize().getHeight());
     }
   }
 
@@ -128,24 +259,16 @@ public class CameraSource {
     stopBackgroundThread();
   }
 
-
-  /** Stops the camera and releases the resources of the camera and underlying detector. */
   public void release() {
     processorLock.release();
   }
 
-  public void setFrameProcessor(VisionImageProcessor processor) {
-    graphicOverlay.clear();
-    synchronized (processorLock) {
-      if (frameProcessor != null) {
-        frameProcessor.stop();
-      }
-      frameProcessor = processor;
-    }
-  }
-
   public Handler getBackgroundHandler() {
     return backgroundHandler;
+  }
+
+  public ImageReader getImageReader() {
+    return imageReader;
   }
 
   public void updateFlashMode(String flashMode) {
@@ -157,7 +280,23 @@ public class CameraSource {
   private void closeCamera() {
     try {
       processorLock.acquire();
-      previewView.stop();
+      if (null != camera) {
+        camera.close();
+        camera = null;
+      }
+      if (null != imageReader) {
+        imageReader.close();
+        imageReader = null;
+      }
+      if (null != cameraCaptureSession) {
+        cameraCaptureSession.close();
+        cameraCaptureSession = null;
+      }
+      if (null != cameraCaptureSession) {
+        cameraCaptureSession.close();
+        cameraCaptureSession = null;
+      }
+
     } catch (InterruptedException e) {
       throw new RuntimeException("Interrupted while trying to lock camera closing.", e);
     } finally {
@@ -166,10 +305,11 @@ public class CameraSource {
 
   }
 
-  public void openCamera(int width, int height, CameraDevice.StateCallback stateCallback) {
+  public void openCamera(int width, int height) {
 
     setUpCameraOutputs(width, height);
     configureTransform(width, height);
+
     CameraManager manager = (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
     try {
       if (!processorLock.tryAcquire(2500, TimeUnit.MILLISECONDS)) {
@@ -255,6 +395,11 @@ public class CameraSource {
 
         List imageSizes = Arrays.asList(map.getOutputSizes(ImageFormat.JPEG));
         Size largest = Collections.max(imageSizes, new CompareSizesByArea());
+
+        imageReader = ImageReader.newInstance(largest.getWidth(), largest.getHeight(),
+                ImageFormat.JPEG, /*maxImages*/2);
+        imageReader.setOnImageAvailableListener(
+                onImageAvailableListener, backgroundHandler);
 
         int displayRotation = ((Activity)context).getWindowManager().getDefaultDisplay().getRotation();
         rotation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION);
@@ -343,6 +488,44 @@ public class CameraSource {
     previewView.setTransform(matrix);
   }
 
+  public void startCameraSession(Surface surface){
+    try {
+      previewRequestBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
+      previewRequestBuilder.addTarget(surface);
+      camera.createCaptureSession(Arrays.asList(surface),
+              new CameraCaptureSession.StateCallback() {
+
+                @Override
+                public void onConfigured(@NonNull CameraCaptureSession captureSession) {
+                  if (null == camera) {
+                    return;
+                  }
+
+                  cameraCaptureSession = captureSession;
+                  try {
+                    previewRequestBuilder.set(CaptureRequest.CONTROL_AF_MODE,
+                            CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
+
+                    previewRequest = previewRequestBuilder.build();
+                    cameraCaptureSession.setRepeatingRequest(previewRequest,
+                            captureCallback, backgroundHandler);
+                  } catch (CameraAccessException e) {
+                    e.printStackTrace();
+                  }
+                }
+
+                @Override
+                public void onConfigureFailed(
+                        @NonNull CameraCaptureSession cameraCaptureSession) {
+                }
+              }, null
+      );
+
+    } catch (CameraAccessException e) {
+      e.printStackTrace();
+    }
+  }
+
   /**
    * Starts a background thread and its {@link Handler}.
    */
@@ -369,5 +552,20 @@ public class CameraSource {
   }
 
 
+  private ValueAnimator createLoadingAnimator(
+          GraphicOverlay graphicOverlay, FirebaseVisionBarcode barcode) {
+    float endProgress = 1.1f;
+    ValueAnimator loadingAnimator = ValueAnimator.ofFloat(0f, endProgress);
+    loadingAnimator.setDuration(2000);
+    loadingAnimator.addUpdateListener(
+            animation -> {
+              if (Float.compare((float) loadingAnimator.getAnimatedValue(), endProgress) >= 0) {
+                graphicOverlay.clear();
+              } else {
+                graphicOverlay.invalidate();
+              }
+            });
+    return loadingAnimator;
+  }
 
 }
