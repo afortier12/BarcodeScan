@@ -37,6 +37,7 @@ public class AppModule {
         return new AppExecutor(
                 Executors.newSingleThreadExecutor(),
                 Executors.newSingleThreadExecutor(),
+                new AppExecutor.AnimationThreadExecutor(),
                 new AppExecutor.MainThreadExecutor());
     }
 

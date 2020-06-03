@@ -8,10 +8,13 @@ import android.preference.PreferenceManager;
 import androidx.annotation.Nullable;
 import androidx.annotation.StringRes;
 
+import com.google.android.gms.common.images.Size;
 import com.google.firebase.ml.vision.barcode.FirebaseVisionBarcode;
 
 import ITM.maint.barcodescan.R;
+import ITM.maint.barcodescan.common.CameraSource;
 import ITM.maint.barcodescan.common.GraphicOverlay;
+import ITM.maint.barcodescan.common.CameraSource;
 
 
 
@@ -24,6 +27,8 @@ public class PreferenceUtils {
                 .putString(context.getString(prefKeyId), value)
                 .apply();
     }
+
+
 
     public static RectF getBarcodeReticleBox(GraphicOverlay overlay) {
         Context context = overlay.getContext();
@@ -76,4 +81,7 @@ public class PreferenceUtils {
                 .putString(context.getString(prefKeyId), value)
                 .apply();
     }
+
+
+
 }
